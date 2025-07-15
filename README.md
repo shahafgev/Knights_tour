@@ -1,26 +1,45 @@
-# Deep Reinforcement Learning meets Graph Neural Networks: exploring a routing optimization use case
-#### Link to paper: [[here](https://arxiv.org/abs/1910.07421)]
-#### P. Almasan, J. Suárez-Varela, A. Badia-Sampera, K. Rusek, P. Barlet-Ros, A. Cabellos-Aparicio.
- 
-Contact: <felician.paul.almasan@upc.edu>
+# Deep Reinforcement Learning for the Knight's Tour with Graph Neural Networks
 
-[![Twitter Follow](https://img.shields.io/twitter/follow/PaulAlmasan?style=social)](https://twitter.com/PaulAlmasan)
-[![GitHub watchers](https://img.shields.io/github/watchers/knowledgedefinednetworking/DRL-GNN?style=social&label=Watch)](https://github.com/knowledgedefinednetworking/DRL-GNN)
-[![GitHub forks](https://img.shields.io/github/forks/knowledgedefinednetworking/DRL-GNN?style=social&label=Fork)](https://github.com/knowledgedefinednetworking/DRL-GNN)
-[![GitHub stars](https://img.shields.io/github/stars/knowledgedefinednetworking/DRL-GNN?style=social&label=Star)](https://github.com/knowledgedefinednetworking/DRL-GNN)
+## Project Overview
+This project applies Deep Q-Learning (DQN) combined with Graph Neural Networks (GNNs) to solve the Knight's Tour problem on a chessboard. The Knight's Tour is a classic combinatorial problem where a knight must visit every square on the board exactly once. By modeling the board as a graph and leveraging GNNs, the agent learns to generalize move strategies across different board configurations.
 
-## Abstract
-Recent advances in Deep Reinforcement Learning (DRL) have shown a significant improvement in decision-making problems. The networking community has started to investigate how DRL can provide a new breed of solutions to relevant optimization problems, such as routing. However, most of the state-of-the-art DRL-based networking techniques fail to generalize, this means that they can only operate over network topologies seen during training, but not over new topologies. The reason behind this important limitation is that existing DRL networking solutions use standard neural networks (e.g., fully connected), which are unable to learn graph-structured information. In this paper we propose to use Graph Neural Networks (GNN) in combination with DRL. GNN have been recently proposed to model graphs, and our novel DRL+GNN architecture is able to learn, operate and generalize over arbitrary network topologies. To showcase its generalization capabilities, we evaluate it on an Optical Transport Network (OTN) scenario, where the agent needs to allocate traffic demands efficiently. Our results show that our DRL+GNN agent is able to achieve outstanding performance in topologies unseen during training.  
+## Approach
+- **Environment:** The chessboard is represented as a graph, where each square is a node and edges represent valid knight moves. The environment is implemented as an OpenAI Gym environment (`KnightTourEnv`).
+- **Agent:** The agent uses a DQN architecture, where the Q-network is a GNN that processes the board's graph structure and outputs Q-values for each possible knight move.
+- **Learning:** The agent is trained via experience replay and periodically evaluated. The GNN enables the agent to learn spatial and structural patterns, improving generalization.
 
-# Instructions to execute
+## Directory Structure
+- `DQN/train_DQN.py` — Main training script for the DQN agent.
+- `DQN/mpnn.py` — GNN (Message Passing Neural Network) model definition.
+- `DQN/gym-environments/gym_environments/envs/knight_tour_env.py` — Knight's Tour Gym environment.
+- `modelssample_DQN_agent/` — Directory for model checkpoints.
 
-[See the execution instructions](https://github.com/knowledgedefinednetworking/DRL-GNN/blob/master/DQN/README.md)
+## Setup Instructions
+1. **Install dependencies:**
+   - Python 3.6+
+   - Install required packages:
+     ```bash
+     pip install -r DQN/requirements.txt
+     ```
+2. **Install the custom Gym environment:**
+   ```bash
+   cd DQN/gym-environments
+   pip install -e .
+   cd ../..
+   ```
+3. **(Optional) Set up Weights & Biases (wandb) for experiment tracking.**
 
-## Description
+## Running Training
+To train the DQN agent on the Knight's Tour problem:
+```bash
+python DQN/train_DQN.py
+```
 
-To know more details about the implementation used in the experiments contact: [felician.paul.almasan@upc.edu](mailto:felician.paul.almasan@upc.edu)
+## Evaluation
+The script performs periodic evaluation during training. Model checkpoints are saved in `modelssample_DQN_agent/`.
 
-Please cite the corresponding article if you use the code from this repository:
+## Citation
+If you use this code, please cite the following article:
 
 ```
 @article{almasan2019deep,
@@ -30,3 +49,6 @@ Please cite the corresponding article if you use the code from this repository:
   year={2019}
 }
 ```
+
+## Contact
+For questions or more details, contact: [felician.paul.almasan@upc.edu](mailto:felician.paul.almasan@upc.edu)
