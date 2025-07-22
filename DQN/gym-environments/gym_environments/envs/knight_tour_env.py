@@ -27,12 +27,6 @@ class KnightTourEnv(gym.Env):
 
         # Action space: 8 possible moves
         self.action_space = spaces.Discrete(8)
-        # Observation: for each square: visited (0/1), x, y (normalized - to be adjustable to different board sizes)
-        self.observation_space = spaces.Box(
-            low=0, high=1,
-            shape=(self.num_squares, 3),
-            dtype=np.float32
-        )
 
         # Create the knight's move graph and adjacency matrix
         self.graph = self._create_knight_graph()
@@ -61,7 +55,6 @@ class KnightTourEnv(gym.Env):
         # print(adjacency)
         return G
 
-    
     def reset(self):
         self.visited = set()
         self.move_count = 0
@@ -88,16 +81,12 @@ class KnightTourEnv(gym.Env):
             self.visited.add(self.current_pos)
             self.move_count += 1
             reward = 1.0 # Moved to an unvisited square
+
             if self.move_count == self.num_squares:
-                # reward += 100.0 # Finished a valid tour
                 done = True
             elif not self.get_valid_moves():
-                # reward = -1.0 # Stuck, no more valid moves
                 done = True
-        else: # TODO: check if necessary
-            # Invalid move
-            reward = -1.0 # TODO: change to zero
-            done = True
+
         return self._get_state(), reward, done, {}
 
     def get_valid_moves(self, get_new_pos = False):
@@ -117,15 +106,37 @@ class KnightTourEnv(gym.Env):
         return valid_moves
 
     def _get_state(self):
-        # State: for each square, [visited, x_norm, y_norm]
-        state = np.zeros((self.num_squares, 4), dtype=np.float32)
+        # State: [x_norm, y_norm, visited, current_pos, degree_norm, betweenness]
+        state = np.zeros((self.num_squares, 6), dtype=np.float32)
+
+        # Calculate betweenness centrality on the subgraph of unvisited nodes
+        unvisited_nodes = [self.pos_to_ind[pos] for pos in self.pos_to_ind if pos not in self.visited]
+        
+        betweenness = {}
+        if len(unvisited_nodes) > 2:
+            unvisited_graph = self.graph.subgraph(unvisited_nodes)
+            betweenness = nx.betweenness_centrality(unvisited_graph, normalized=True, endpoints=False)
+
         for i in range(self.board_size):
             for j in range(self.board_size):
                 idx = i * self.board_size + j
+                pos = (i, j)
                 state[idx, 0] = i / (self.board_size - 1) if self.board_size > 1 else 0.0
                 state[idx, 1] = j / (self.board_size - 1) if self.board_size > 1 else 0.0
-                state[idx, 2] = 1.0 if (i, j) in self.visited else 0.0
-                state[idx, 3] = 1.0 if (i, j) == self.current_pos else 0.0
+                state[idx, 2] = 1.0 if pos in self.visited else 0.0
+                state[idx, 3] = 1.0 if pos == self.current_pos else 0.0
+                
+                # Calculate normalized degree
+                degree = 0
+                for dx, dy in self.knight_moves:
+                    ni, nj = i + dx, j + dy
+                    if (0 <= ni < self.board_size and 0 <= nj < self.board_size and (ni, nj) not in self.visited):
+                        degree += 1
+                state[idx, 4] = degree / 8.0
+
+                # Assign betweenness centrality
+                state[idx, 5] = betweenness.get(idx, 0.0)
+
         return state
 
     def print_board(self, valid_moves=False):

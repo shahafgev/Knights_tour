@@ -1,0 +1,1 @@
+{"_step":13955,"eval/episode_reward":13,"_timestamp":1.7526975039415667e+09,"eval/eval_step":880,"_wandb":{"runtime":24183},"_runtime":24183,"initial_evaluation/episode_reward":14,"eval/epsilon":0.1730128104744653,"train/episode_reward":13,"model/max_reward":15.35,"initial_evaluation/epsilon":1,"train/epsilon":0.1662122034722543,"train/train_step":8640}

@@ -1,0 +1,72 @@
+_wandb:
+    value:
+        cli_version: 0.21.0
+        e:
+            8t6fw3lwau2sg3gmeikhxn9jmzijq6q4:
+                codePath: train_DQN.py
+                codePathLocal: train_DQN.py
+                cpu_count: 4
+                cpu_count_logical: 8
+                disk:
+                    /:
+                        total: "511452434432"
+                        used: "323005427712"
+                email: shahafgev10@gmail.com
+                executable: C:\Knights_tour\drl_gnn_py39\Scripts\python.exe
+                git:
+                    commit: 8e149dc206a7284bc676755f58888c18b13da4ee
+                    remote: https://github.com/shahafgev/Knight-s_tour.git
+                host: DESKTOP-BNPFSVM
+                memory:
+                    total: "8344559616"
+                os: Windows-10-10.0.19045-SP0
+                program: C:\Knights_tour\DQN\train_DQN.py
+                python: CPython 3.9.13
+                root: C:\Knights_tour\DQN
+                startedAt: "2025-07-16T13:42:01.997171Z"
+                writerId: 8t6fw3lwau2sg3gmeikhxn9jmzijq6q4
+        m: []
+        python_version: 3.9.13
+        t:
+            "1":
+                - 2
+                - 3
+            "2":
+                - 2
+                - 3
+            "3":
+                - 16
+            "4": 3.9.13
+            "5": 0.21.0
+            "8":
+                - 3
+            "12": 0.21.0
+            "13": windows-amd64
+T:
+    value: 4
+batch_size:
+    value: 32
+env:
+    value: KnightTour-v1
+epsilon_decay:
+    value: 0.995
+epsilon_min:
+    value: 0.01
+epsilon_start:
+    value: 1
+evaluation_episodes:
+    value: 40
+gamma:
+    value: 0.95
+iterations:
+    value: 1000
+learning_rate:
+    value: 0.0001
+node_state_dim:
+    value: 20
+readout_units:
+    value: 35
+seed:
+    value: 37
+training_episodes:
+    value: 20

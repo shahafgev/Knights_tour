@@ -1,8 +1,3 @@
-# Copyright (c) 2021, Paul Almasan [^1]
-#
-# [^1]: Universitat Politècnica de Catalunya, Computer Architecture
-#     department, Barcelona, Spain. Email: felician.paul.almasan@upc.edu
-
 import numpy as np
 import gym
 import gc
@@ -22,55 +17,46 @@ logging.getLogger('tensorflow').setLevel(logging.ERROR)
 import wandb
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-
-
 ENV_NAME = 'KnightTour-v1'
 
 SEED = 37
-ITERATIONS = 1000 #10000
-TRAINING_EPISODES = 20 # 20
-EVALUATION_EPISODES = 40
-FIRST_WORK_TRAIN_EPISODE = 60 # 60
-
+ITERATIONS = 100
+TRAINING_EPISODES = 10 # 20 
+EVALUATION_EPISODES = 10 # 40
+FIRST_WORK_TRAIN_EPISODE = 30 # 60
+COPY_WEIGHTS_INTERVAL = 10 # 20
+EVALUATION_INTERVAL = 10 # 20
+EPSILON_START_DECAY = 30 # 70
+MAX_QUEUE_SIZE = 4000
 MULTI_FACTOR_BATCH = 6 # Number of batches used in training
-TAU = 0.08 # Only used in soft weights copy
+
+hparams = {
+    'l2': 1e-4,                # Lower L2 regularization to prevent overfitting but not too high
+    'dropout_rate': 0.1,       # Slightly higher dropout for regularization
+    'input_shape': 6,          # 5 features per node (as per your new state)
+    'nodes_state_dim': 32,     # Larger hidden state for richer node representation
+    'readout_units': 64,       # More units in the readout MLP for better capacity
+    'learning_rate': 0.0005,   # Slightly higher learning rate for faster convergence
+    'batch_size': 64,          # Larger batch size for more stable updates
+    'T': 4,                    # Message passing steps (4 is a good start)
+}
+
+gamma = 0.99
+epsilon_start = 1.0
+epsilon_min = 0.05
+epsilon_decay = 0.995
+MAX_QUEUE_SIZE = 10000
+COPY_WEIGHTS_INTERVAL = 10
+MULTI_FACTOR_BATCH = 8
 
 differentiation_str = "sample_DQN_agent"
-checkpoint_dir = "./models"+differentiation_str
+checkpoint_dir = "./models" + differentiation_str
 store_loss = 3 # Store the loss every store_loss batches
 
 os.environ['PYTHONHASHSEED']=str(SEED)
 np.random.seed(SEED)
 random.seed(SEED)
-
-# Force TensorFlow to use single thread.
-# Multiple threads are a potential source of non-reproducible results.
-# For further details, see: https://stackoverflow.com/questions/42022950/
-# tf.config.threading.set_inter_op_parallelism_threads(1)
-# tf.config.threading.set_intra_op_parallelism_threads(1)
-
 tf.random.set_seed(1)
-
-train_dir = "./TensorBoard/"+differentiation_str
-# summary_writer = tf.summary.create_file_writer(train_dir)
-
-copy_weights_interval = 50
-evaluation_interval = 20
-epsilon_start_decay = 70
-
-
-hparams = {
-    'l2': 0.1,
-    'dropout_rate': 0.01,
-    'input_shape' : 4,
-    'nodes_state_dim': 20, # Size of the hidden states feature vector
-    'readout_units': 35, # Number of neurons in the hidden layers of the Readout MLP
-    'learning_rate': 0.0001,
-    'batch_size': 32,
-    'T': 4, #  Amount of message passing
-}
-
-MAX_QUEUE_SIZE = 4000
 
 
 class DQNAgent:
@@ -80,9 +66,7 @@ class DQNAgent:
         self.epsilon = 1.0 # exploration rate
         self.epsilon_min = 0.01
         self.epsilon_decay = 0.995
-        self.writer = None
 
-        self.listQValues = None
         self.numbersamples = batch_size
         self.action = None
 
@@ -126,6 +110,28 @@ class DQNAgent:
         preds_next_target = tf.stop_gradient(self.target_network(node_features, adjacency_list, training=training))
         return prediction_state, preds_next_target
 
+    def valid_moves_by_state(self, state):
+        """
+        Given a state array, returns the list of valid knight move indices (0-7).
+        - state: np.ndarray of shape [num_squares, 4]
+        """
+        board_size = int(np.sqrt(state.shape[0]))
+        knight_moves = [
+            (-2, -1), (-2, 1), (-1, -2), (-1, 2),
+            (1, -2), (1, 2), (2, -1), (2, 1)
+        ]
+        # Find current position (where state[:, 3] == 1)
+        current_idx = np.argmax(state[:, 3])
+        x, y = divmod(current_idx, board_size)
+        valid_moves = []
+        for i, (dx, dy) in enumerate(knight_moves):
+            nx, ny = x + dx, y + dy
+            if 0 <= nx < board_size and 0 <= ny < board_size:
+                next_idx = nx * board_size + ny
+                if state[next_idx, 2] == 0:  # Not visited
+                    valid_moves.append(i)
+        return valid_moves
+
     def _train_step(self, batch):
         """
         Performs a single training step (mini-batch update) for the DQN agent.
@@ -164,24 +170,38 @@ class DQNAgent:
 
                 # Q-values for current state and next state
                 q_values = self.primary_network(state_tensor, adjacency_list, training=True)  # [num_actions=8]
-                next_q_values = self.target_network(next_state_tensor, next_adjacency_list, training=True)  # [num_actions=8]
-
                 # Q-value for the action taken (scalar)
                 q_value = q_values[action]  # []
+                
+                next_q_values = self.target_network(next_state_tensor, next_adjacency_list, training=True).numpy()  # [num_actions=8]
+                
+                # Mask out invalid moves for next_q_values
+                valid_moves_indices = self.valid_moves_by_state(next_state)
+                masked_next_q_values = np.full_like(next_q_values, -np.inf)
+                masked_next_q_values[valid_moves_indices] = next_q_values[valid_moves_indices]
+
                 # Max Q-value for next state (scalar)
-                max_next_q = tf.reduce_max(next_q_values)  # []
+                max_next_q = tf.reduce_max(masked_next_q_values)  # []
+                if max_next_q == -np.inf:
+                    max_next_q = 0
+                
                 # Target Q-value: reward + gamma * max_next_q (if not done)
                 target_q = reward + self.gamma * max_next_q * (1.0 - float(done))  # []
+                # print(f"Reward: {reward}, Max next Q: {max_next_q}, Done: {done}, Target Q: {target_q}")
 
                 preds_state.append(q_value)  # Accumulate predicted Q-value
                 target.append(target_q)      # Accumulate target Q-value
 
             preds_state = tf.stack(preds_state)  # [batch_size], predicted Q-values for actions taken
+            # print("Preds state: ", preds_state)
             target = tf.stack(target)            # [batch_size], target Q-values
+            # print("Target: ", target)
             # Compute mean squared error loss between predicted and target Q-values
             loss = tf.keras.losses.MSE(target, preds_state)
+            # print("Loss: ", loss)
             # Add L2 regularization loss from the model
             regularization_loss = sum(self.primary_network.losses)
+            # print("Regularization loss: ", regularization_loss)
             loss = loss + regularization_loss
 
         # Computes the gradient of the loss with respect to the model parameters
@@ -193,7 +213,7 @@ class DQNAgent:
         del tape
         return grad, loss
 
-    def replay(self, episode):
+    def train(self, iteration):
         """
         Performs experience replay for the DQN agent.
         - Samples random mini-batches from the replay buffer and trains the agent.
@@ -207,16 +227,17 @@ class DQNAgent:
                 - Sample a random batch from the replay buffer.
                 - Perform a training step using _train_step.
                 - Log the loss every store_loss batches.
-            - Every copy_weights_interval episodes, update the target network weights.
+            - Every COPY_WEIGHTS_INTERVAL episodes, update the target network weights.
             - Run garbage collection to free memory.
         """
         for i in range(MULTI_FACTOR_BATCH):
             batch = random.sample(agent.memory, agent.numbersamples)
             grad, loss = agent._train_step(batch)
-            wandb.log({"train/loss": loss.numpy(), "train/episode": ep_it})
-            #print(f"[Train] Iter {ep_it} | Batch {i} | Loss: {loss.numpy():.6f}")
+            wandb.log({"train/loss": loss.numpy()})
+            # print(f"\n loss: {loss} \n")
+       
         # Hard weights update
-        if ep_it % copy_weights_interval == 0:
+        if iteration % COPY_WEIGHTS_INTERVAL == 0:
             agent.target_network.set_weights(agent.primary_network.get_weights())
         gc.collect()
     
@@ -250,6 +271,7 @@ if __name__ == "__main__":
     env_training = gym.make(ENV_NAME)  # Training environment
     np.random.seed(SEED)
     env_training.seed(SEED)
+    
     env_eval = gym.make(ENV_NAME)      # Evaluation environment
     np.random.seed(SEED)
     env_eval.seed(SEED)
@@ -261,6 +283,8 @@ if __name__ == "__main__":
     train_ep = 0
     max_reward = 0
     reward_id = 0
+    train_step = 0
+    eval_step = 0
 
     if not os.path.exists(checkpoint_dir):
         os.makedirs(checkpoint_dir)
@@ -269,35 +293,31 @@ if __name__ == "__main__":
 
     rewards_test = np.zeros(EVALUATION_EPISODES)
 
-    # --- Initial Evaluation Before Training ---
-    for eps in tqdm(range(EVALUATION_EPISODES)):
-        state = env_eval.reset()
-        rewardAddTest = 0
-        eval_steps = 0
-        while True:
-            action = agent.act(env_eval, state, True)  # Always exploit during evaluation
-            next_state, reward, done, _ = env_eval.step(action)
-            rewardAddTest += reward
-            state = next_state
-            eval_steps += 1
-            if done:
-                break
-        rewards_test[eps] = rewardAddTest
-        wandb.log({"initial_evaluation/episode_reward": rewardAddTest})
-        wandb.log({"initial_evaluation/epsilon": agent.epsilon})
-    #print(f"[Init Eval] Mean Reward: {evalMeanReward:.2f} | Epsilon: {agent.epsilon:.4f}")
+    # # --- Initial Evaluation Before Training ---
+    # for eps in tqdm(range(EVALUATION_EPISODES)):
+    #     state = env_eval.reset()
+    #     rewardAddTest = 0
+    #     while True:
+    #         action = agent.act(env_eval, state, True)  # Always exploit during evaluation
+    #         next_state, reward, done, _ = env_eval.step(action)
+    #         rewardAddTest += reward
+    #         state = next_state
+    #         if done:
+    #             break
+    #     rewards_test[eps] = rewardAddTest
+    #     wandb.log({"initial_evaluation/episode_reward": rewardAddTest})
+    #     wandb.log({"initial_evaluation/epsilon": agent.epsilon})
 
-    counter_store_model = 1
 
     # --- Main Training Loop ---
-    for ep_it in tqdm(range(ITERATIONS)): # 100 times
+    for iteration in tqdm(range(ITERATIONS)): 
 
         # Use more training episodes at the start to fill replay buffer
-        if ep_it == 0:
-            train_episodes = FIRST_WORK_TRAIN_EPISODE
+        if iteration == 0:
+            buffer_episode = FIRST_WORK_TRAIN_EPISODE
         else:
-            train_episodes = TRAINING_EPISODES
-        for _ in range(train_episodes): # 60 at first, than 20
+            buffer_episode = TRAINING_EPISODES
+        for _ in range(buffer_episode): 
             tf.random.set_seed(1)  # For reproducibility
             state = env_training.reset()
             episode_reward = 0
@@ -305,6 +325,7 @@ if __name__ == "__main__":
             while True:
                 action = agent.act(env_training, state, False)  # Epsilon-greedy during training
                 next_state, reward, done, _ = env_training.step(action)
+                # print("Reward: ", reward)
                 # Store transition in replay buffer
                 agent.add_sample(state, env_training.adjacency_list, action, reward, done, next_state, env_training.adjacency_list)
                 state = next_state
@@ -312,42 +333,39 @@ if __name__ == "__main__":
                 step_count += 1
                 if done:
                     break
-            wandb.log({"train/episode_reward": episode_reward, "train/iterations": ep_it, "train/epsilon": agent.epsilon})
-            #print(f"[Train] Episode {ep_it * train_episodes + train_ep} | Reward: {episode_reward:.2f} | Steps: {step_count} | Epsilon: {agent.epsilon:.4f}")
+            train_step += 1    
+            wandb.log({"train/episode_reward": episode_reward, "train/train_step": train_step, "train/epsilon": agent.epsilon})
 
         # Train the agent using experience replay
-        agent.replay(ep_it)
+        agent.train(iteration)
 
         # --- Epsilon Decay (Exploration Rate) ---
-        if ep_it > epsilon_start_decay and agent.epsilon > agent.epsilon_min:
+        if iteration > EPSILON_START_DECAY and agent.epsilon > agent.epsilon_min:
             agent.epsilon *= agent.epsilon_decay
 
         # --- Periodic Evaluation and Model Saving ---
-        if ep_it % evaluation_interval == 0:
+        if iteration % EVALUATION_INTERVAL == 0:
             for eps in range(EVALUATION_EPISODES):
                 state = env_eval.reset()
                 rewardAddTest = 0
-                eval_steps = 0
                 while True:
                     action = agent.act(env_eval, state, True)  # Always exploit during evaluation
                     next_state, reward, done, _ = env_eval.step(action)
                     rewardAddTest += reward
                     state = next_state
-                    eval_steps += 1
                     if done:
                         break
                 rewards_test[eps] = rewardAddTest
-                wandb.log({"eval/episode_reward": rewardAddTest})
-                wandb.log({"eval/epsilon": agent.epsilon})
+                eval_step += 1
+                wandb.log({"eval/episode_reward": rewardAddTest, "eval/epsilon": agent.epsilon,"eval/eval_step": eval_step})
             evalMeanReward = np.mean(rewards_test)
 
-            #print(f"[Eval] Iter {ep_it} | Mean Reward: {evalMeanReward:.2f} | Epsilon: {agent.epsilon:.4f}")
 
             # Track and save the best model
             if evalMeanReward > max_reward:
                 max_reward = evalMeanReward
-                reward_id = ep_it
+                reward_id = iteration
             checkpoint.save(checkpoint_prefix)
             wandb.log({"model/max_reward": max_reward})
-            #print(f"[Model] Saved checkpoint at iter {ep_it} | Max Reward: {max_reward:.2f} | Model ID: {reward_id}")
+            #print(f"[Model] Saved checkpoint at iter {iteration} | Max Reward: {max_reward:.2f} | Model ID: {reward_id}")
 

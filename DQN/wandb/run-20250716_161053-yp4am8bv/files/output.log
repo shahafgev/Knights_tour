@@ -1,0 +1,14 @@
+100%|███████████████████████████████████████████████| 40/40 [00:06<00:00,  6.42it/s]
+  0%|                                                      | 0/1000 [02:51<?, ?it/s]
+Traceback (most recent call last):
+  File "C:\Knights_tour\DQN\train_DQN.py", line 331, in <module>
+    agent.train(iteration)
+  File "C:\Knights_tour\DQN\train_DQN.py", line 222, in train
+    grad, loss = agent._train_step(batch)
+  File "C:\Knights_tour\DQN\train_DQN.py", line 175, in _train_step
+    masked_next_q_values[valid_moves_indices] = next_q_values[valid_moves_indices]
+  File "C:\Knights_tour\drl_gnn_py39\lib\site-packages\tensorflow\python\util\traceback_utils.py", line 153, in error_handler
+    raise e.with_traceback(filtered_tb) from None
+  File "C:\Knights_tour\drl_gnn_py39\lib\site-packages\tensorflow\python\framework\ops.py", line 7107, in raise_from_not_ok_status
+    raise core._status_to_exception(e) from None  # pylint: disable=protected-access
+tensorflow.python.framework.errors_impl.InvalidArgumentError: Index out of range using input dim 1; input has only 1 dims [Op:StridedSlice] name: strided_slice/

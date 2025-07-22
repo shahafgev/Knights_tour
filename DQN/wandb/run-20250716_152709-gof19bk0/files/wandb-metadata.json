@@ -1,0 +1,28 @@
+{
+  "os": "Windows-10-10.0.19045-SP0",
+  "python": "CPython 3.9.13",
+  "startedAt": "2025-07-16T12:27:09.880081Z",
+  "program": "c:\\Knights_tour\\DQN\\train_DQN.py",
+  "codePath": "train_DQN.py",
+  "codePathLocal": "train_DQN.py",
+  "git": {
+    "remote": "https://github.com/shahafgev/Knight-s_tour.git",
+    "commit": "8e149dc206a7284bc676755f58888c18b13da4ee"
+  },
+  "email": "shahafgev10@gmail.com",
+  "root": "C:\\Knights_tour\\DQN",
+  "host": "DESKTOP-BNPFSVM",
+  "executable": "C:\\Knights_tour\\drl_gnn_py39\\Scripts\\python.exe",
+  "cpu_count": 4,
+  "cpu_count_logical": 8,
+  "disk": {
+    "/": {
+      "total": "511452434432",
+      "used": "323153965056"
+    }
+  },
+  "memory": {
+    "total": "8344559616"
+  },
+  "writerId": "6v3l5e1pad8hjre34g1oz7bp7xbkiuvs"
+}

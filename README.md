@@ -38,17 +38,3 @@ python DQN/train_DQN.py
 ## Evaluation
 The script performs periodic evaluation during training. Model checkpoints are saved in `modelssample_DQN_agent/`.
 
-## Citation
-If you use this code, please cite the following article:
-
-```
-@article{almasan2019deep,
-  title={Deep reinforcement learning meets graph neural networks: Exploring a routing optimization use case},
-  author={Almasan, Paul and Su{\'a}rez-Varela, Jos{\'e} and Badia-Sampera, Arnau and Rusek, Krzysztof and Barlet-Ros, Pere and Cabellos-Aparicio, Albert},
-  journal={arXiv preprint arXiv:1910.07421},
-  year={2019}
-}
-```
-
-## Contact
-For questions or more details, contact: [felician.paul.almasan@upc.edu](mailto:felician.paul.almasan@upc.edu)
