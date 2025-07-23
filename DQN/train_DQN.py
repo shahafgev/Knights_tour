@@ -2,6 +2,9 @@ import numpy as np
 import gym
 import gc
 import os
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Only show errors, not warnings
+
 import sys
 import gym_environments
 import random
@@ -12,17 +15,14 @@ import multiprocessing
 import time as tt
 import glob
 from tqdm.auto import tqdm
-import logging
-logging.getLogger('tensorflow').setLevel(logging.ERROR)
 import wandb
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-ENV_NAME = 'KnightTour-v1'
 
+ENV_NAME = 'KnightTour-v1'
 SEED = 37
 ITERATIONS = 100
 TRAINING_EPISODES = 10 # 20 
-EVALUATION_EPISODES = 10 # 40
+EVALUATION_EPISODES = 20 # 40
 FIRST_WORK_TRAIN_EPISODE = 30 # 60
 COPY_WEIGHTS_INTERVAL = 10 # 20
 EVALUATION_INTERVAL = 10 # 20
@@ -43,11 +43,9 @@ hparams = {
 
 gamma = 0.99
 epsilon_start = 1.0
-epsilon_min = 0.05
+epsilon_min = 0.3
 epsilon_decay = 0.995
-MAX_QUEUE_SIZE = 10000
-COPY_WEIGHTS_INTERVAL = 10
-MULTI_FACTOR_BATCH = 8
+
 
 differentiation_str = "sample_DQN_agent"
 checkpoint_dir = "./models" + differentiation_str
@@ -69,7 +67,10 @@ class DQNAgent:
 
         self.numbersamples = batch_size
         self.action = None
-
+        self.knight_moves = [
+            (-2, -1), (-2, 1), (-1, -2), (-1, 2),
+            (1, -2), (1, 2), (2, -1), (2, 1)
+        ]
         self.global_step = 0
         self.primary_network = gnn.myModel(hparams)
         self.primary_network.build()
@@ -85,31 +86,25 @@ class DQNAgent:
         - flagEvaluation: if True, always pick best action (no exploration)
         """
         valid_actions = env.get_valid_moves()  # List of valid action indices
-        state_tensor = tf.convert_to_tensor(state, dtype=tf.float32) # [num_squares, input_dim]
-        q_values = self.primary_network(state_tensor, env.adjacency_list, training=False).numpy()  # [8]
-
-        # Mask out invalid actions
-        masked_q_values = np.full_like(q_values, -np.inf)
-        masked_q_values[valid_actions] = q_values[valid_actions]
-
-        # Exploitation
-        if flagEvaluation or np.random.rand() > self.epsilon:
-            action = np.argmax(masked_q_values)
+        state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
+        q_values = []
+        action_node_indices = []
+        x, y = env.current_pos
+        for action in valid_actions:
+            dx, dy = env.knight_moves[action]
+            target_x, target_y = x + dx, y + dy
+            target_node_idx = env.pos_to_ind[(target_x, target_y)]
+            q = self.primary_network(state_tensor, env.adjacency_list, target_node_idx, training=False).numpy()
+            q_values.append(q)
+            action_node_indices.append(target_node_idx)
+        q_values = np.array(q_values)
         # Exploration
-        else:
-            action = np.random.choice(valid_actions)
-
-        return action
+        if flagEvaluation or np.random.rand() > self.epsilon:
+            action_idx = np.argmax(q_values)
+        else: # Exploitation
+            action_idx = np.random.choice(len(valid_actions))
+        return valid_actions[action_idx], action_node_indices[action_idx] # 0-7, 0-Board_size^2
     
-    @tf.function
-    def _forward_pass(self, node_features, adjacency_list, training=True):
-        """
-        Performs a forward pass through the primary and target networks.
-        """
-        prediction_state = self.primary_network(node_features, adjacency_list, training=training)
-        preds_next_target = tf.stop_gradient(self.target_network(node_features, adjacency_list, training=training))
-        return prediction_state, preds_next_target
-
     def valid_moves_by_state(self, state):
         """
         Given a state array, returns the list of valid knight move indices (0-7).
@@ -135,73 +130,46 @@ class DQNAgent:
     def _train_step(self, batch):
         """
         Performs a single training step (mini-batch update) for the DQN agent.
-
         Args:
             batch: List of tuples, each containing
-                (state, adjacency_list, action, reward, done, next_state, next_adjacency_list)
-                - state: np.ndarray, current board state [num_nodes, input_dim]
-                - adjacency_list: list of lists, graph structure for the state
-                - action: int, action taken
-                - reward: float, reward received
-                - done: bool, whether the episode ended
-                - next_state: np.ndarray, next board state
-                - next_adjacency_list: list of lists, graph structure for the next state
-
-        Steps:
-            - For each sample in the batch:
-                - Compute Q-values for the current state and next state using the primary and target networks.
-                - Select the Q-value for the action taken.
-                - Compute the target Q-value as reward + gamma * max_next_q * (1 - done).
-            - Compute the mean squared error loss between predicted and target Q-values.
-            - Add L2 regularization loss.
-            - Compute, clip, and apply gradients to update the primary network.
+                (state, adjacency_list, action_node_idx, reward, done, next_state, next_adjacency_list)
         Returns:
             grad: List of gradients for logging/debugging.
             loss: Scalar loss value for this training step.
         """
         # Record operations for automatic differentiation
         with tf.GradientTape() as tape:
-            preds_state = []  # List to store predicted Q-values for each sample in the batch [batch_size]
-            target = []       # List to store target Q-values for each sample in the batch [batch_size]
-            for state, adjacency_list, action, reward, done, next_state, next_adjacency_list in batch:
-                # Convert states to tensors
-                state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)  # [num_nodes, input_dim]
-                next_state_tensor = tf.convert_to_tensor(next_state, dtype=tf.float32)  # [num_nodes, input_dim]
+            preds_state = []
+            target = []
+            for state, adjacency_list, action_node_idx, reward, done, next_state, next_adjacency_list in batch:
+                state_tensor = tf.convert_to_tensor(state, dtype=tf.float32)
+                next_state_tensor = tf.convert_to_tensor(next_state, dtype=tf.float32)
+                # Q-value for the (state, action) pair
+                q_value = self.primary_network(state_tensor, adjacency_list, action_node_idx, training=True)
+                # For next_state, get all valid next actions
+                valid_next_actions = self.valid_moves_by_state(next_state)
+                max_next_q = 0
+                board_size = int(np.sqrt(next_state.shape[0]))
+                # Find current position in next_state
+                current_idx = np.argmax(next_state[:, 3])
+                x, y = divmod(current_idx, board_size)
+                for next_action in valid_next_actions:
+                    dx, dy = self.knight_moves[next_action]
+                    target_x, target_y = x + dx, y + dy
+                    
+                    target_node_idx = target_x * board_size + target_y
+                    q = self.target_network(next_state_tensor, next_adjacency_list, target_node_idx, training=True).numpy()
+                    if q > max_next_q:
+                        max_next_q = q
 
-                # Q-values for current state and next state
-                q_values = self.primary_network(state_tensor, adjacency_list, training=True)  # [num_actions=8]
-                # Q-value for the action taken (scalar)
-                q_value = q_values[action]  # []
-                
-                next_q_values = self.target_network(next_state_tensor, next_adjacency_list, training=True).numpy()  # [num_actions=8]
-                
-                # Mask out invalid moves for next_q_values
-                valid_moves_indices = self.valid_moves_by_state(next_state)
-                masked_next_q_values = np.full_like(next_q_values, -np.inf)
-                masked_next_q_values[valid_moves_indices] = next_q_values[valid_moves_indices]
-
-                # Max Q-value for next state (scalar)
-                max_next_q = tf.reduce_max(masked_next_q_values)  # []
-                if max_next_q == -np.inf:
-                    max_next_q = 0
-                
-                # Target Q-value: reward + gamma * max_next_q (if not done)
-                target_q = reward + self.gamma * max_next_q * (1.0 - float(done))  # []
-                # print(f"Reward: {reward}, Max next Q: {max_next_q}, Done: {done}, Target Q: {target_q}")
-
-                preds_state.append(q_value)  # Accumulate predicted Q-value
-                target.append(target_q)      # Accumulate target Q-value
-
-            preds_state = tf.stack(preds_state)  # [batch_size], predicted Q-values for actions taken
-            # print("Preds state: ", preds_state)
-            target = tf.stack(target)            # [batch_size], target Q-values
-            # print("Target: ", target)
-            # Compute mean squared error loss between predicted and target Q-values
+                target_q = reward + self.gamma * max_next_q * (1.0 - float(done))
+                preds_state.append(q_value)
+                target.append(target_q)
+            preds_state = tf.stack(preds_state)
+            target = tf.convert_to_tensor(target, dtype=tf.float32)
             loss = tf.keras.losses.MSE(target, preds_state)
-            # print("Loss: ", loss)
             # Add L2 regularization loss from the model
             regularization_loss = sum(self.primary_network.losses)
-            # print("Regularization loss: ", regularization_loss)
             loss = loss + regularization_loss
 
         # Computes the gradient of the loss with respect to the model parameters
@@ -241,12 +209,13 @@ class DQNAgent:
             agent.target_network.set_weights(agent.primary_network.get_weights())
         gc.collect()
     
-    def add_sample(self, state, adjacency_list, action, reward, done, next_state, next_adjacency_list):
+    def add_sample(self, state, adjacency_list, action_node_idx, reward, done, next_state, next_adjacency_list):
         """
         Store a transition in the replay buffer for Knight's Tour:
-        (state, adjacency_list, action, reward, done, next_state, next_adjacency_list)
+        (state, adjacency_list, action_node_idx, reward, done, next_state, next_adjacency_list)
         """
-        self.memory.append((state, adjacency_list, action, reward, done, next_state, next_adjacency_list))
+        self.memory.append((state, adjacency_list, action_node_idx, reward, done, next_state, next_adjacency_list))
+
 
 if __name__ == "__main__":
     # --- Weights & Biases (wandb) Setup ---
@@ -317,17 +286,16 @@ if __name__ == "__main__":
             buffer_episode = FIRST_WORK_TRAIN_EPISODE
         else:
             buffer_episode = TRAINING_EPISODES
-        for _ in range(buffer_episode): 
+        for _ in tqdm(range(buffer_episode)): 
             tf.random.set_seed(1)  # For reproducibility
             state = env_training.reset()
             episode_reward = 0
             step_count = 0
             while True:
-                action = agent.act(env_training, state, False)  # Epsilon-greedy during training
+                action, action_node_idx = agent.act(env_training, state, False)  # Epsilon-greedy during training
                 next_state, reward, done, _ = env_training.step(action)
-                # print("Reward: ", reward)
                 # Store transition in replay buffer
-                agent.add_sample(state, env_training.adjacency_list, action, reward, done, next_state, env_training.adjacency_list)
+                agent.add_sample(state, env_training.adjacency_list, action_node_idx, reward, done, next_state, env_training.adjacency_list)
                 state = next_state
                 episode_reward += reward
                 step_count += 1
@@ -349,7 +317,7 @@ if __name__ == "__main__":
                 state = env_eval.reset()
                 rewardAddTest = 0
                 while True:
-                    action = agent.act(env_eval, state, True)  # Always exploit during evaluation
+                    action, _ = agent.act(env_eval, state, True)  # Always exploit during evaluation
                     next_state, reward, done, _ = env_eval.step(action)
                     rewardAddTest += reward
                     state = next_state
@@ -357,7 +325,7 @@ if __name__ == "__main__":
                         break
                 rewards_test[eps] = rewardAddTest
                 eval_step += 1
-                wandb.log({"eval/episode_reward": rewardAddTest, "eval/epsilon": agent.epsilon,"eval/eval_step": eval_step})
+                wandb.log({"eval/episode_reward": rewardAddTest,"eval/eval_step": eval_step})
             evalMeanReward = np.mean(rewards_test)
 
 

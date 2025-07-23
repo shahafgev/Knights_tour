@@ -20,7 +20,7 @@ class myModel(tf.keras.Model):
         self.Readout.add(keras.layers.Dropout(rate=hparams['dropout_rate']))
         self.Readout.add(keras.layers.Dense(self.hparams['readout_units'], activation=tf.nn.selu, kernel_regularizer=regularizers.l2(hparams['l2']), name="Readout2"))
         self.Readout.add(keras.layers.Dropout(rate=hparams['dropout_rate']))
-        self.Readout.add(keras.layers.Dense(8, kernel_regularizer=regularizers.l2(hparams['l2']), name="QValues"))
+        self.Readout.add(keras.layers.Dense(1, kernel_regularizer=regularizers.l2(hparams['l2']), name="QValue"))
 
 
     def build(self, input_shape=None):
@@ -37,12 +37,20 @@ class myModel(tf.keras.Model):
         # Build the Update GRUCell to accept node hidden states of size nodes_state_dim
         self.Update.build(input_shape=tf.TensorShape([None, self.hparams['nodes_state_dim']]))
         # Build the Readout MLP to accept the aggregated graph embedding of size nodes_state_dim
-        self.Readout.build(input_shape=[None, self.hparams['nodes_state_dim']])
+        self.Readout.build(input_shape=[None, 2 * self.hparams['nodes_state_dim']])
         # Mark the model as built
         self.built = True
 
-    @tf.function
-    def call(self, node_features, adjacency_list, training=False):
+    #@tf.function
+    def call(self, node_features, adjacency_list, target_node_id, training=False):
+        """
+        Args:
+            node_features: [num_nodes, input_dim]
+            adjacency_list: list of lists, each sublist contains neighbor indices for that node
+            action_node_id: scalar int tensor — index of the node we consider as the knight's target move
+        Returns:
+            q_value: scalar — Q(s, a)
+        """
         # node_features: (num_nodes, input_dim)
         # adjacency_list: list of lists, each sublist contains neighbor indices for that node
         # Project input features to hidden dimension
@@ -73,10 +81,20 @@ class myModel(tf.keras.Model):
             nodes_state = nodes_state[0]  # [num_nodes, nodes_state_dim]
         # Aggregate node states (sum or mean)
         graph_embedding = tf.reduce_sum(nodes_state, axis=0, keepdims=True)  # [1, nodes_state_dim]
-        q_values = self.Readout(graph_embedding, training=training)  # [1, 8]
-        q_values = tf.squeeze(q_values, axis=0)  # [8]
-        return q_values
+        
+        # Extract action node embedding
+        action_embedding = tf.gather(nodes_state, target_node_id)  # [nodes_state_dim]
+        action_embedding = tf.expand_dims(action_embedding, axis=0)  # [1, nodes_state_dim]
 
+        # Concatenate graph + action embeddings
+        combined = tf.concat([graph_embedding, action_embedding], axis=1)  # [1, 2 * nodes_state_dim]
+
+        # Compute Q-value
+        q_value = self.Readout(combined, training=training)  # [1, 1]
+        q_value = tf.squeeze(q_value, axis=0)  # [1]
+        q_value = tf.squeeze(q_value, axis=0)  # scalar
+
+        return q_value
 
 # if __name__ == "__main__":
 #     # Define hyperparameters
